@@ -122,7 +122,14 @@ def report() -> None:
         f = ROOT / "runs" / name / "progress.json"
         age = now - p.get("updated", 0)
         frac = p["step"] / max(p["steps"], 1)
-        state = "stalled" if age > STALE_S else ("done" if frac >= 0.999 else "running")
+        # Completion wins over staleness: a finished run has no reason to keep writing,
+        # so judging it by heartbeat age would report every successful run as stalled.
+        if frac >= 0.999:
+            state = "done"
+        elif age > STALE_S:
+            state = "stalled"
+        else:
+            state = "running"
         if state == "running":
             live.append(p)
         eta = "—" if state != "running" else human(p["eta_s"])

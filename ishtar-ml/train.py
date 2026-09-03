@@ -66,6 +66,9 @@ class TrainConfig:
     radiometric residual and cross-look prediction.
     """
 
+    stereo_supervised: bool = False
+    """Fit the stereo DEM directly, as a ceiling test for what the inputs determine."""
+
     supervised_only: bool = False
     """Fit `z_true` directly with `L_earth` and switch every Venus term off.
 
@@ -170,6 +173,21 @@ def compute_losses(
     z = out["z_hat"]
     terms: dict[str, torch.Tensor] = {}
     diag: dict[str, torch.Tensor] = {}
+
+    if cfg.stereo_supervised:
+        # The ceiling test: fit the stereo DEM directly wherever it is trusted.
+        #
+        # If a model given the answer cannot beat the bicubic baseline's stereo error,
+        # then SAR and altimetry simply do not determine the stereo DEM's mid-frequency
+        # detail, and no reweighting of the weakly supervised objective will change that.
+        # This separates "the loss is badly balanced" from "the information is not there".
+        trust = batch["stereo_trust"]
+        tgt = batch["stereo_dem"]
+        terms["earth"] = (L._masked_mean((z - tgt).abs(), trust) / L.SCALES.stereo_m
+                          + L.gradient_l1(z, tgt, px, trust) / L.SCALES.slope_rad)
+        total = L.total_loss(terms, cfg.weights, phys_ramp)
+        return total, terms, {"z_std": z.std().detach(),
+                              "relief_m": (z - batch["gtdr_up"]).abs().mean().detach()}
 
     if not venus or cfg.supervised_only:
         terms["earth"] = L.loss_earth(z, batch["z_true"], px, scales=cfg.loss_scales)
@@ -411,6 +429,8 @@ PHASES = {
     # On the real pipeline this is Sentinel-1 + GLO-30; here it is synthetic z_true.
     "pretrain":     dict(steps=900,   n_tiles=200,   lr=3e-4, ckpt_dir="runs/pretrain",
                          supervised_only=True, val_every=300),
+    "stereo_ceiling": dict(steps=900, n_tiles=200,   lr=3e-4, ckpt_dir="runs/stereo_ceiling",
+                           stereo_supervised=True, val_every=0),
     "sanity":       dict(steps=2000,  n_tiles=200,   lr=3e-4, ckpt_dir="runs/sanity"),
     "earth":        dict(steps=80000, n_tiles=30000, lr=3e-4, ckpt_dir="runs/earth"),
     "venus_stereo": dict(steps=30000, n_tiles=20000, lr=1e-4, ckpt_dir="runs/venus_stereo"),
@@ -449,7 +469,7 @@ def main() -> None:
         # them; only the weakly supervised objective applies.
         if a.phase in ("overfit", "pretrain"):
             raise SystemExit(f"phase {a.phase!r} fits z_true, which real tiles do not have")
-    elif a.phase not in ("sanity", "overfit", "pretrain"):
+    elif a.phase not in ("sanity", "overfit", "pretrain", "stereo_ceiling"):
         raise SystemExit(
             f"Phase {a.phase!r} needs real tiles: run data/download.py then data/tile.py "
             "and point the dataset at the Zarr store. Only --phase sanity runs on the "

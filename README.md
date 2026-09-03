@@ -32,7 +32,18 @@ correctly saying it does not know.
 The cause is measurable: resolvable topographic slope explains about **1% of the variance**
 in 75 m Magellan backscatter. The architecture note assumes the radiometric residual is "to
 first order, exactly the slope signal you want to invert"; against real data it mostly is
-not. See [docs/RESULTS.md](docs/RESULTS.md) for the numbers and what to try next.
+not.
+
+A ceiling test settles whether that is a loss-design problem or a data problem. Trained
+against the stereo DEM as a *direct target* — handed the answer — the model closes **3.9%**
+of the gap to the altimetry baseline, and the relief it produces explains the radar image
+no better than a flat surface. The weakly supervised collapse was not a bug: the model
+found what is there and declined.
+
+**75 m Venus topography does not appear recoverable from Magellan SAR plus altimetry by
+this route.** The untested lever is the Earth prior, which cannot add information the
+inputs lack. A coarser target — 225 m to 1 km — is a smaller claim the evidence supports
+better. See [docs/RESULTS.md](docs/RESULTS.md).
 
 Phase 0 on synthetic data reaches +28.5% skill over the bicubic baseline, and that is not
 evidence about Venus — the synthetic generator renders through the same forward model the

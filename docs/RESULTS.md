@@ -45,6 +45,56 @@ without the uncertainty term *did* produce 30.7 m of relief, which suggests `L_n
 tips it into the degenerate solution: with σ free, the negative log-likelihood is minimised
 by predicting the conditional mean and declaring high uncertainty.
 
+## The ceiling test: it is the data, not the loss
+
+Before reweighting anything, one question had to be answered — is the information in the
+inputs at all? `--phase stereo_ceiling` trains the same network against the stereo DEM as a
+*direct target*, handing it the answer wherever stereo is trusted.
+
+| | alt m | phys dB | x-look dB | stereo m | relief m |
+|---|---|---|---|---|---|
+| bicubic GTDR (the input) | 34.10 | 2.498 | 20.95 | 140.2 | 0.0 |
+| **supervised on stereo** | 38.18 | 2.494 | 20.97 | **134.8** | 19.7 |
+| weakly supervised | 34.12 | 2.131 | 22.31 | 140.2 | 0.1 |
+
+**Given the target, the model closes 3.9% of the gap.** 140.2 m becomes 134.8 m. It does
+produce 19.7 m of relief, and that relief explains the radar image *no better than flat
+altimetry* — +0.005 dB on the physics residual, +0.01 dB on cross-look. It is fitting the
+stereo DEM's low-frequency content with no radiometric support, and drifting from the
+altimetry (38.2 m against 34.1 m) to do it.
+
+So the collapse in the weakly supervised run was not a badly balanced objective. The model
+found what is there, which is almost nothing, and correctly declined — reporting 100 m of
+uncertainty rather than inventing terrain.
+
+Three independent lines of evidence now agree:
+
+1. Resolvable slope explains **~1%** of the variance in 75 m Magellan backscatter.
+2. The weakly supervised model adds **0.19 m** of relief and explains the image through
+   `b(x)` alone.
+3. A model **handed the stereo DEM** recovers **3.9%** of the difference from altimetry,
+   and what it recovers is not radiometrically consistent.
+
+**The honest conclusion: 75 m Venus topography is not recoverable from Magellan SAR plus
+altimetry by this route.** Not with a better loss balance, and not with more steps.
+
+That is a real answer to the question the architecture note asks, and it is worth more
+than a number that looked good. The note's framing — "the 75 m signal must come from
+physics (radarclinometry)" — rests on the radiometric residual being dominated by slope.
+Against the actual mosaics it is dominated by roughness and dielectric contrast instead.
+
+### What could still change this
+
+- **The Earth prior (Phase 1).** Untested, and the one part of the recommended framing not
+  yet tried. But it cannot manufacture information the inputs do not contain; it can only
+  supply plausible texture, which is the hallucination failure the note itself warns about.
+  The cross-look metric exists precisely to catch that, and should be watched closely.
+- **Real incidence angles** from the F-BIDR labels. Worth doing regardless — the physics
+  term has been running on a placeholder profile throughout.
+- **A coarser target.** Nothing here rules out useful gains at 225 m–1 km, between the
+  altimeter footprint and where the radar stops carrying slope. That is a smaller claim
+  than the note makes, and the evidence so far supports it better.
+
 **What to try next**, in the order I would try it:
 
 1. **Constrain `b(x)` much harder** — lower resolution than 1/16, a far stronger TV
