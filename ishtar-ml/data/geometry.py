@@ -57,16 +57,32 @@ CYCLE3 = IncidenceModel(lat_peak_deg=10.0, theta_peak_deg=25.0, curvature_deg_pe
 INCIDENCE_MODELS = {"left": CYCLE1, "right": CYCLE2, "stereo": CYCLE3}
 
 
-def look_vector(look: str, orbit_azimuth_deg: float = 0.0) -> np.ndarray:
+MAPPING_TRACK_AZIMUTH_DEG = 180.0
+"""Ground-track azimuth of Magellan's mapping passes, clockwise from north.
+
+Magellan imaged on the *descending* leg of each orbit, running north to south, so the
+track azimuth is ~180 deg and a left-looking beam illuminates to the **east**.
+
+This is not a detail. Assuming a northward track (azimuth 0) puts the down-range
+direction west, which inverts every slope the physics loss infers. Synthetic data cannot
+catch it: the renderer and the loss share the convention, so a wrong one is perfectly
+self-consistent and every test passes. It shows up only against the real mosaics, where
+the correlation between stereo-derived slope and observed brightness is +0.09 for east and
+-0.09 for west, with both orthogonal directions at 0.00.
+"""
+
+
+def look_vector(look: str, orbit_azimuth_deg: float = MAPPING_TRACK_AZIMUTH_DEG) -> np.ndarray:
     """Horizontal ground-range direction `(east, north)`, pointing **away from the radar**.
 
     This is the convention `model.physics` uses: terrain rising along `look_vector` is
     tilted toward the radar, so `alpha = atan(grad(z) . look_vec)` is positive there.
 
     Magellan's orbit was near-polar, so the ground track runs roughly north-south and the
-    beam points roughly east-west. `orbit_azimuth_deg` is the ground-track azimuth
-    clockwise from north; pass the real per-tile value when you have it, since it departs
-    from 0 near the poles.
+    beam points roughly east-west. `orbit_azimuth_deg` defaults to the mapping passes'
+    southward track (see `MAPPING_TRACK_AZIMUTH_DEG`), which makes the left-look beam
+    illuminate east; pass the real per-tile value when you have it, since it departs from
+    180 near the poles.
     """
     az = np.deg2rad(orbit_azimuth_deg)
     track = np.array([np.sin(az), np.cos(az)])  # (east, north) along the ground track
@@ -78,7 +94,11 @@ def look_vector(look: str, orbit_azimuth_deg: float = 0.0) -> np.ndarray:
         v = -left_of_track
     else:
         raise ValueError(f"unknown look {look!r}; expected 'left', 'right' or 'stereo'")
-    return (v / np.linalg.norm(v)).astype(np.float32)
+    v = v / np.linalg.norm(v)
+    # sin(180 deg) is 1.2e-16, not 0. That dust survives into the rendered image and
+    # breaks the exactness of the dihedral augmentation tests, so snap it away.
+    v = np.where(np.abs(v) < 1e-12, 0.0, v)
+    return v.astype(np.float32)
 
 
 def incidence_raster(lats_deg: np.ndarray, look: str) -> np.ndarray:

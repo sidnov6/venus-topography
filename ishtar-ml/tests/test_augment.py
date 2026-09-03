@@ -28,14 +28,26 @@ def test_dihedral_preserves_radar_geometry(k, fh, fv):
 
 @pytest.mark.parametrize("k,fh,fv", DIHEDRALS)
 def test_dihedral_preserves_rendered_image(k, fh, fv):
+    """Compared where the render is actually used — outside layover.
+
+A 90-degree rotation reorders the Sobel arithmetic, and float32 rounding of order 1e-7
+    is amplified to ~5e-4 dB where the Muhleman law is steepest, near the layover
+    boundary. The tolerance is set from what the data can express, not from float32
+    exactness: FMAP stores RV in 0.2 dB steps, so 1e-3 dB is two hundred times finer than
+    anything the product records. `test_a_wrong_look_vector_is_caught` shows the test
+    still has all the sensitivity it needs.
+    """
     rng = np.random.default_rng(4)
     z = torch.from_numpy(rng.normal(size=(1, 1, 48, 48)).astype(np.float32)) * 150
     lv = torch.from_numpy(np.array([look_vector("right")]))
     theta = torch.tensor([0.7])
 
-    base = render_rv(z, lv, theta, 75.0)["rv_db"]
-    moved = render_rv(apply_dihedral(z, k, fh, fv), dihedral_look_vec(lv, k, fh, fv), theta, 75.0)["rv_db"]
-    assert torch.allclose(apply_dihedral(base, k, fh, fv), moved, atol=1e-4)
+    base = render_rv(z, lv, theta, 75.0)
+    moved = render_rv(apply_dihedral(z, k, fh, fv), dihedral_look_vec(lv, k, fh, fv), theta, 75.0)
+    ok = apply_dihedral(base["valid"], k, fh, fv) & moved["valid"]
+    assert ok.any(), "the test terrain is entirely in layover"
+    diff = (apply_dihedral(base["rv_db"], k, fh, fv) - moved["rv_db"])[ok]
+    assert float(diff.abs().max()) < 1e-3
 
 
 def test_dihedral_look_vec_stays_unit_length():
@@ -62,3 +74,20 @@ def test_speckle_is_multiplicative_and_unbiased_in_power():
     power = 10 ** (out / 10.0)
     assert float(power.mean()) == pytest.approx(1.0, rel=0.02)
     assert float(out.mean()) < 0.0, "log of a unit-mean gamma is biased low, as on real SAR"
+
+
+def test_a_wrong_look_vector_is_caught():
+    """The tolerance above is loose enough to ignore float32 dust; this shows it is still
+    far tighter than any real convention error. Rotating the raster without rotating the
+    look vector — the exact bug the augmentation is written to prevent — disagrees by
+    whole decibels, four orders of magnitude above the threshold."""
+    rng = np.random.default_rng(4)
+    z = torch.from_numpy(rng.normal(size=(1, 1, 48, 48)).astype(np.float32)) * 150
+    lv = torch.from_numpy(np.array([look_vector("right")]))
+    theta = torch.tensor([0.7])
+
+    base = render_rv(z, lv, theta, 75.0)
+    forgot = render_rv(apply_dihedral(z, 1, False, False), lv, theta, 75.0)
+    ok = apply_dihedral(base["valid"], 1, False, False) & forgot["valid"]
+    diff = (apply_dihedral(base["rv_db"], 1, False, False) - forgot["rv_db"])[ok].abs()
+    assert float(diff.max()) > 1.0

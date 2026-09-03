@@ -22,13 +22,30 @@ What is built and verified, what is stubbed and why, and what the next person sh
 | Synthetic demo tiles: 8 layers, global + region-of-interest terrain pyramids | ✅ |
 | Imagery alignment check (Mead crater, 1.5 px) | ✅ automated |
 
-## Stubbed, and why
+## Real data: what was actually needed
 
-**Data ingest** (`data/tile.py`, `data/earth.py`). The grid arithmetic, DN decoding,
-windowing, longitude wrapping and tile assembly are implemented and tested against
-in-memory rasters. What is missing is the rasterio loop over files that are not on this
-machine — roughly 300 GB of USGS and PDS products. Both modules exit with an explicit
-message rather than producing empty output.
+The headline number in the architecture note is ~300 GB. The real figure is **3.1 GB**,
+because the USGS mosaics are tiled Cloud-Optimised GeoTIFFs and a window read fetches
+only the 256 x 256 internal tiles it touches.
+
+| | size | how |
+|---|---|---|
+| 75 m SAR, left + right look | **~130 MB** | 1 059 windowed reads from S3; never downloaded |
+| GTDR + GSDR + GEDR, global | 0.18 GB | downloaded whole; they are small |
+| Herrick stereo DEM | 2.97 GB | the only bulk item worth having |
+
+Two further economies worth knowing. The `_jpeg` mosaic variants are the *same* 75 m
+resolution with JPEG compression inside the GeoTIFF — 117 GB becomes 16.8 GB — so even a
+full download is a seventh of the naive figure. And the 225 m global mosaic (13 GB) buys
+a whole-planet product if you want one; it was dropped here only because the link
+measured about 1 MB/s.
+
+`data/sources.py` holds the products and the lon/lat sampling; `data/ingest.py` cuts
+tiles; `data/real.py` is the training dataset. `data/tile.py` remains the idealised-grid
+version and its tests, superseded for real work by `sources.py`.
+
+**Earth pretraining** (`data/earth.py`) is still stubbed: Sentinel-1 staging needs a STAC
+client and a few hundred GB of scratch.
 
 **Phases 1–3.** They need the real tiles and a CUDA machine; MPS is ~30× worse per pixel
 above 128 px tiles. `train.py` refuses these phases rather than silently training on the
@@ -53,19 +70,20 @@ statistic rather than by the brightness head.
 
 ## What to do next, in order
 
-1. **`data/download.py --list`, then clip six regions** through Map-A-Planet 2 — Ovda,
-   Alpha, Mead, Guinevere, Maxwell, Maat. Three of those have stereo coverage. Do not
-   mirror the global mosaics until Phase 2 metrics look right.
-2. **Fit the incidence-angle model** from the real F-BIDR / mosaic labels
-   (`data.geometry.fit_incidence_from_labels`). The values shipped are a documented
-   placeholder, and the physics loss reads them directly: a systematic few-degree error
-   becomes a systematic slope error.
-3. **Fill in `HELD_OUT_QUADS`** (`data/tile.py`) after looking at
-   `data.store.quad_summary`. Section 2.4 wants a tessera region, a plains region with
-   small volcanoes, and a crater field. Maxwell and Maat stay in training — a metric you
-   have been eyeballing for weeks is not a held-out metric.
+0. **Get the incidence angles from the F-BIDR labels.** The placeholder profile is still
+   in use and the stereo-based calibration cannot replace it (DECISIONS §15). This is now
+   the highest-value open item, because the physics loss reads those angles directly.
+
+1. **Finish the stereo DEM download.** It is the only source of signal for `L_nll`, so
+   without it the uncertainty head trains on nothing — and the uncertainty map is what
+   makes a model-derived DEM honest. `data/sources.py` handles a partial file by treating
+   rows past the downloaded extent as nodata, so it is usable while it arrives.
+2. **Re-ingest with stereo** (`python -m data.ingest`), which turns on `L_stereo` and
+   `L_nll` over the ~20% with coverage.
+3. **Scale up the ingest.** 1 059 tiles is what fits an evening; `--per-region` caps it
+   and the regions hold 27 000 at 512 px. Transfer is about 130 kB per tile.
 4. **Stage the Earth set** and run Phase 1 on CUDA. Not RTC products. Not vegetated
-   terrain.
+   terrain. This is the one part of the recommended framing still untested.
 5. **Phases 2 and 3**, then calibrate, then global inference.
 6. **Watch the EMA.** `train.py` now scores the moving average alongside the live weights
    at the end of every run, and the two should agree closely. If they diverge, the average

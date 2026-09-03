@@ -212,3 +212,118 @@ Mead crater and reads the framebuffer. The marker lands 1.5 px from centre.
 It catches the whole class of projection mistakes at once — a Web Mercator tiling scheme,
 a TMS/XYZ row-order flip, a 0-360 longitude that was never wrapped — each of which
 renders a perfectly plausible globe with everything in the wrong place.
+
+
+## 11. The 300 GB was never necessary
+
+The architecture note budgets ~300 GB of Magellan mosaics. Three properties of the actual
+products reduce that to about 3 GB.
+
+**They are tiled COGs.** The 75 m left-look mosaic is 506 928 x 230 948 pixels, internally
+tiled 256 x 256. A `rasterio` window read over `/vsicurl/` fetches only the tiles the
+window touches, so cutting a 512 px training tile moves roughly 130 kB. 1 059 tiles across
+ten regions cost about 130 MB and four minutes, against 117 GB for the file.
+
+**There are JPEG variants.** `Venus_Magellan_LeftLook_mosaic_global_75m_jpeg.tif` is the
+same 75 m resolution with JPEG compression inside the GeoTIFF: 117 GB becomes 16.8 GB, and
+the right-look becomes 7.2 GB. Even a full mirror is a seventh of the naive figure. There
+is no JPEG variant of the Cycle 3 stereo-look mosaic, which is why that look is off by
+default in the ingest.
+
+**The auxiliaries are tiny.** GTDR, GSDR and GEDR together are 0.18 GB at 4641 m.
+
+Only the Herrick stereo DEM genuinely has to be fetched whole (2.97 GB), because it is a
+headerless PDS `.img` rather than a COG. It is also the one product without which `L_nll`
+has no signal at all.
+
+## 12. Four things only real data could tell us
+
+**`rasterio.read()` does not apply band scale and offset.** Emissivity is stored as int16
+with a scale of 1e-4, so it arrived as ~8500 instead of 0.85 — four orders of magnitude
+off, as a network input, with nothing to show for it but a worse model. Confirmed fixed by
+reading 0.850 on the plains and 0.452 at Maxwell Montes, which is the known
+high-emissivity-anomaly signature.
+
+**A partial `.img` reads as terrain.** `np.memmap` on a headerless array happily maps to
+the declared shape; rows past the downloaded extent come back as zeros, which on Venus is
+a sea-level plain rather than missing data. `StereoDEM.available_rows` bounds the map to
+what is actually on disk, and because the array runs north to south a partial download is
+an honest northern band rather than a corrupt file.
+
+**The stereo DEM's datum is off by ~795 m.** Regressed over 50 patches against the
+altimetry: `stereo = 0.982 * GTDR - 795 m`, correlation 0.9981, residual scatter 71 m. The
+scatter is the Herrick DEM's own quoted 50-100 m vertical accuracy, so the shape is right
+and the datum is not. Stereo gives relative heights and the absolute tie has to come from
+altimetry, so `data/ingest.py` removes the median difference per tile. That also leaves
+`L_stereo` teaching exactly what it should — the departure from GTDR in the 100 m - 10 km
+band — while `L_alt` keeps the level.
+
+**`np.savez_compressed` decompresses the whole array per access.** Each array is one
+deflate stream, so indexing a single tile out of a 278 MB raster decompresses all of it.
+Training went from 2.8 s/step on synthetic to 13.8 s/step on real tiles for that reason
+alone. `data/real.py` expands the store into memory-mapped `.npy` files once: 1 ms per
+sample, at about 4x the disk.
+
+## 13. Without the stereo DEM the uncertainty head trains on nothing
+
+The first real-data training step reported `nll=0.000`, and it stayed there. `L_nll` is
+computed against the stereo DEM, and its unsupervised hinge is measured relative to the
+supervised sigma — so with no stereo coverage at all, both halves are identically zero and
+the variance head receives no gradient.
+
+The DEM still trains: altimetry, radarclinometry, cross-look and roughness are all
+unaffected. But the uncertainty map is the thing that makes a model-derived product honest
+rather than merely plausible, and it is worth being explicit that it depends entirely on
+the one product that has to be downloaded whole.
+
+
+## 14. The look direction was wrong, and only real data could show it
+
+`data/geometry.py` assumed a northward ground track, which puts the left-look beam's
+down-range direction **west**. Magellan imaged on the *descending* leg of each orbit,
+running north to south, so a left-looking beam illuminates **east**.
+
+Measured against the real mosaics — correlation between stereo-derived slope toward the
+radar and observed flattened backscatter, both smoothed to 2.4 km:
+
+| assumed down-range | correlation |
+|---|---|
+| east (descending pass, correct) | **+0.091** |
+| west (as shipped) | −0.091 |
+| north | +0.007 |
+| south | −0.007 |
+
+Physics requires a positive correlation. The orthogonal directions sitting at zero is what
+confirms the signal is real rather than an artefact of the test.
+
+**This is the failure mode the whole repository is built to prevent, and its own tests
+could not catch it.** `tests/test_augment.py` and `tests/test_physics.py` verify that the
+renderer and the losses agree about the convention, and they do — the synthetic generator
+renders *with the same convention the loss inverts*, so a wrong one is perfectly
+self-consistent and every test passes. Synthetic data can prove internal consistency. It
+cannot tell you which way the radar was pointing.
+
+## 15. The incidence angle cannot be recovered from the stereo DEM
+
+`data/calibrate_geometry.py` was written to replace the placeholder incidence profile by
+fitting theta where the stereo DEM makes the slope known. It does not work, and the script
+now says so instead of returning a number.
+
+The fit slides to whatever theta the model is least sensitive to. A +/-3 degree slope swing
+moves the predicted RV by 3.64 dB at theta=15 and only 1.42 dB at theta=53, so when the
+observation does not track slope, least squares rails against the top of the search grid:
+64% of tiles pin there, and the quadratic profile through them peaks at latitude -264
+degrees, which is not a latitude.
+
+The cause is upstream. The stereo DEM's 71 m vertical accuracy becomes ~9.5 degrees of
+slope noise at its 600 m posting, against real Venus slopes of a few degrees. Smoothing to
+2.4 km cuts the noise to 2.4 degrees and the correlation still only reaches +0.09.
+
+That number is worth sitting with. The architecture note says the residual in RV is "to
+first order, exactly the slope signal you want to invert". Against real data, resolvable
+topographic slope explains about **1% of the variance** in 75 m Magellan backscatter; the
+rest is the `b(x)` nuisance field — roughness and dielectric contrast. The physics loss is
+real but far weaker on Venus than the synthetic experiments implied, and this is the
+central risk to the approach that Phase 0 could not have surfaced.
+
+Recovering the angles needs the F-BIDR labels, which is what the note specified first.

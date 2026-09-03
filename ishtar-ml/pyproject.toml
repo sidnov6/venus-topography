@@ -9,6 +9,7 @@ dependencies = ["torch>=2.4", "numpy>=1.26"]
 # The geo stack is only needed to ingest the real products; the model and the tests
 # import it lazily or not at all.
 data = ["rasterio>=1.3", "rioxarray", "zarr>=3", "dask", "xarray", "pyproj", "requests"]
+# `rasterio` alone is enough for the real ingest: it reads the USGS COGs by window.
 train = ["hydra-core", "wandb", "lightning"]
 dev = ["pytest>=8", "matplotlib"]
 

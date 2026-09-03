@@ -25,6 +25,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from data.dataset import BatchSpec, build_batch, drop_second_looks
+from data.real import RealVenus
 from data.synthetic import SyntheticConfig, SyntheticVenus
 from eval import metrics as eval_metrics
 from model import losses as L
@@ -55,6 +56,14 @@ class TrainConfig:
     """Checkpoint to start from, as Phase 2 starts from Phase 1.
 
     EMA weights are preferred when present, matching what inference uses.
+    """
+
+    data: str = "synthetic"
+    """`synthetic`, or a path to a store written by `data.ingest`.
+
+    Real tiles carry no `z_true`, so the trainer reports nothing at validation time and
+    the honest metrics come from `eval.run_eval` instead — against stereo, altimetry, the
+    radiometric residual and cross-look prediction.
     """
 
     supervised_only: bool = False
@@ -276,9 +285,15 @@ def train(cfg: TrainConfig) -> dict[str, float]:
     ckpt = Path(cfg.ckpt_dir)
     ckpt.mkdir(parents=True, exist_ok=True)
 
-    scfg = SyntheticConfig(size=cfg.tile_size, pixel_size_m=cfg.batch_spec.pixel_size_m)
-    train_ds = SyntheticVenus(cfg.n_tiles, scfg, seed=cfg.seed)
-    val_ds = SyntheticVenus(max(8, cfg.batch_size * 2), scfg, seed=cfg.seed + 991)
+    if cfg.data == "synthetic":
+        scfg = SyntheticConfig(size=cfg.tile_size, pixel_size_m=cfg.batch_spec.pixel_size_m)
+        train_ds = SyntheticVenus(cfg.n_tiles, scfg, seed=cfg.seed)
+        val_ds = SyntheticVenus(max(8, cfg.batch_size * 2), scfg, seed=cfg.seed + 991)
+    else:
+        train_ds = RealVenus(cfg.data, "train", crop_px=cfg.tile_size, seed=cfg.seed)
+        val_ds = RealVenus(cfg.data, "val", crop_px=cfg.tile_size, seed=cfg.seed)
+        print(train_ds.summary())
+        print(val_ds.summary())
     train_dl = DataLoader(train_ds, batch_size=cfg.batch_size, shuffle=True, drop_last=True)
     val_dl = DataLoader(val_ds, batch_size=cfg.batch_size)
     # A fixed slice of the *training* set, scored the same way. Without it, a flat metric
@@ -398,13 +413,15 @@ def main() -> None:
     ap.add_argument("--device", default="auto")
     ap.add_argument("--ckpt-dir")
     ap.add_argument("--init-from", help="checkpoint to warm-start from, as Phase 2 does")
+    ap.add_argument("--data", default="synthetic",
+                    help="'synthetic', or a store written by data.ingest")
     ap.add_argument("--raw-loss-scales", action="store_true",
                     help="disable the per-term uncertainty normalisation (for the A/B only)")
     ap.add_argument("--seed", type=int, default=0)
     a = ap.parse_args()
 
     cfg = TrainConfig(phase=a.phase, seed=a.seed, device=a.device, **PHASES[a.phase])
-    for k in ("steps", "batch_size", "tile_size", "n_tiles", "ckpt_dir", "init_from"):
+    for k in ("steps", "batch_size", "tile_size", "n_tiles", "ckpt_dir", "init_from", "data"):
         v = getattr(a, k)
         if v is not None:
             setattr(cfg, k, v)
@@ -412,7 +429,12 @@ def main() -> None:
         cfg.loss_scales = L.UNIT_SCALES
         cfg.ckpt_dir = cfg.ckpt_dir + "_rawscale" if not a.ckpt_dir else cfg.ckpt_dir
         print("raw loss scales: terms are metres, decibels and radians, unnormalised")
-    if a.phase not in ("sanity", "overfit", "pretrain"):
+    if a.data != "synthetic":
+        # Real tiles have no ground truth, so the supervised phases are meaningless on
+        # them; only the weakly supervised objective applies.
+        if a.phase in ("overfit", "pretrain"):
+            raise SystemExit(f"phase {a.phase!r} fits z_true, which real tiles do not have")
+    elif a.phase not in ("sanity", "overfit", "pretrain"):
         raise SystemExit(
             f"Phase {a.phase!r} needs real tiles: run data/download.py then data/tile.py "
             "and point the dataset at the Zarr store. Only --phase sanity runs on the "
