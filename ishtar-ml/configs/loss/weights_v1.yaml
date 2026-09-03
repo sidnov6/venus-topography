@@ -1,0 +1,15 @@
+# Section 5.7 starting point.
+earth: 1.0
+stereo: 1.0
+alt: 2.0
+phys: 0.3
+cross: 0.3
+rms: 0.05
+nll: 0.1
+reg: 0.01
+
+# The physics loss is unstable while the DEM is still garbage: ramp it in.
+phys_ramp_steps: 5000
+huber_delta: 1.0
+pyramid_levels: 2
+layover_margin_deg: 5.0

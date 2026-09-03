@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  ml:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ishtar-ml
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # The model, losses and tests deliberately depend only on torch and numpy; the geo
+      # stack is imported lazily inside the data-pipeline modules. If this job starts
+      # needing rasterio or zarr, something imported them at module scope by mistake.
+      - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - run: pip install numpy pytest
+      - run: python -m pytest tests/ -q
+
+  globe:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ishtar-globe
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build

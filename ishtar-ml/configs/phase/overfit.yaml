@@ -1,0 +1,12 @@
+name: overfit           # Phase 0 control
+data: synthetic
+supervised_only: true   # L_earth against z_true only; every Venus term off
+steps: 600
+n_tiles: 8
+batch_size: 8
+lr: 3.0e-4
+val_every: 100
+ckpt_dir: runs/overfit
+# Purpose: separate "the architecture cannot represent or optimise this" from "the Venus
+# supervision does not determine it". Those need opposite fixes and a flat metric curve
+# looks identical either way.

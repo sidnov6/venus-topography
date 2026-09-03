@@ -1,0 +1,13 @@
+in_channels: 18
+cond_dim: 10
+widths: [64, 128, 256, 512, 512]
+depths: [2, 2, 3, 3, 3]
+decoder_width: 192
+
+# The receptive field must exceed the altimeter footprint (20 km = ~270 px at 75 m).
+# Five downsampling stages alone do not reach that, so the bottleneck is dilated.
+bottleneck_dilations: [1, 2, 4, 8]
+
+residual_scale_m: 1500.0    # tanh bound on the residual over GTDR
+brightness_downscale: 16    # h_b is 1/16 resolution so it cannot absorb slope
+logvar_range: [-2.0, 12.0]  # sigma from ~0.4 m to ~400 m

@@ -1,0 +1,9 @@
+name: earth             # Phase 1
+data: earth
+steps: 80000
+n_tiles: 30000
+batch_size: 16          # 8 on a 24 GB card
+lr: 3.0e-4
+warmup_steps: 1000
+active_losses: [earth]  # GLO-30 is a real label; the Venus terms have nothing to see
+ckpt_dir: runs/earth

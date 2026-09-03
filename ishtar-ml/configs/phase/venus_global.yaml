@@ -1,0 +1,7 @@
+name: venus_global      # Phase 3
+data: venus
+tile_filter: null
+steps: 50000
+lr: 1.0e-4
+init_from: runs/venus_stereo/last.pt
+ckpt_dir: runs/venus_global

@@ -1,0 +1,7 @@
+name: venus_stereo      # Phase 2
+data: venus
+tile_filter: has_stereo_dem
+steps: 30000
+lr: 1.0e-4
+init_from: runs/earth/last.pt
+ckpt_dir: runs/venus_stereo

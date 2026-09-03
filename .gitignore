@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.venv/
+.DS_Store
+data_raw/
+data_tiles/
+runs/
+wandb/
+outputs/
+*.tif
+*.zarr/
+node_modules/
+dist/
+ishtar-globe/public/tiles/*
+!ishtar-globe/public/tiles/.gitkeep
+docs/writeup/ishtar.html

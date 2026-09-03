@@ -1,0 +1,19 @@
+pixel_size_m: 75.0          # Magellan FMAP native posting
+gtdr_stride_px: 62          # 4641 m / 75 m
+gsdr_cell_m: 4641.0
+
+# Tiles are cut with a context ring so the altimeter footprint convolution in L_alt sees
+# terrain rather than padding. See model/losses.py::loss_alt and data/tile.py::TileSpec.
+core_px: 512                # 38.4 km, what the network is scored on
+margin_px: 384              # 28.8 km, ~3 sigma of the footprint
+alt_edge_margin_px: 373     # posts nearer than this to the border are dropped from L_alt
+
+max_abs_lat_deg: 80.0       # cylindrical distortion past this is not trainable
+stereo_trusted_scale_m: 1000.0
+
+# Augmentation. Flips and rotations transform look_vec jointly (data/augment.py).
+augment: true
+max_gain_db: 3.0
+speckle_looks: 6.0
+p_drop_right: 0.4           # 80% of Venus is left-look only; train that pathway hard
+p_drop_stereo: 0.4

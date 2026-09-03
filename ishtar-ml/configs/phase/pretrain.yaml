@@ -1,0 +1,12 @@
+name: pretrain          # the Earth stage, in miniature
+data: synthetic
+supervised_only: true
+steps: 900
+n_tiles: 200
+batch_size: 8
+lr: 3.0e-4
+val_every: 300
+ckpt_dir: runs/pretrain
+# On the real pipeline this is Sentinel-1 + GLO-30 (configs/phase/earth.yaml). Here it is
+# synthetic z_true, which tests the same claim: learn the prior where a label exists,
+# then adapt with weak supervision only.

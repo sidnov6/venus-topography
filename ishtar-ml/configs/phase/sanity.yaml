@@ -1,0 +1,10 @@
+name: sanity            # Phase 0
+data: synthetic
+steps: 2000
+n_tiles: 200
+tile_size: 512
+batch_size: 4
+lr: 3.0e-4
+warmup_steps: 100
+ckpt_dir: runs/sanity
+# Acceptance: beat bicubic GTDR, look_vec sign verified, L_phys gradients O(1e-3) dB/m.

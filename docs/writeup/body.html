@@ -1,0 +1,560 @@
+<div class="page">
+
+  <header>
+    <p class="eyebrow">Magellan · 1990&ndash;1994 · reprocessed 2026</p>
+    <h1>Venus at 75&nbsp;metres</h1>
+    <p class="lede">
+      Nobody has ground-truth elevation for Venus at 75&nbsp;m. ISHTAR is an attempt to
+      recover it anyway &mdash; from radar physics, a coarse altimeter, and a stereo DEM
+      covering a fifth of the planet &mdash; and to say honestly, pixel by pixel, how much
+      of the result to believe.
+    </p>
+    <div class="spec">
+      <div><span class="k">Reference sphere</span><span class="v">6&nbsp;051.8 km</span></div>
+      <div><span class="k">SAR posting</span><span class="v">75 m</span></div>
+      <div><span class="k">Altimetry grid</span><span class="v">4&nbsp;641 m</span></div>
+      <div><span class="k">Footprint</span><span class="v">10 × 20 km</span></div>
+      <div><span class="k">Stereo coverage</span><span class="v">~20 %</span></div>
+      <div><span class="k">Second look</span><span class="v">~17 %</span></div>
+    </div>
+  </header>
+
+  <h2>The problem is not regression</h2>
+  <p>
+    Magellan mapped Venus at 75&nbsp;m per pixel, but only in <em>radar brightness</em>.
+    Its altimeter measured elevation on a 4&nbsp;641&nbsp;m grid through a footprint about
+    10&nbsp;×&nbsp;20&nbsp;km across &mdash; two orders of magnitude coarser. Between those
+    two products lies a band, roughly 100&nbsp;m to 10&nbsp;km, where nothing measured the
+    shape of the planet at all.
+  </p>
+  <p>
+    So there is no label to regress to. The 75&nbsp;m signal has to come from physics. A
+    facet tilted toward the radar returns more energy, and the Magellan mosaics are already
+    flattened for the nominal incidence angle &mdash; the stored value is
+    <code>RV = 10&nbsp;log₁₀(σ⁰ / σ⁰<sub>Muhleman</sub>)</code>, encoded as
+    <code>DN = 5(RV + 20) + 1</code>. What is left in that residual is, to first order,
+    exactly the slope. Inverting it is called radarclinometry, and it is ill-posed: the
+    slope <em>along</em> the look direction is well constrained, the slope across it is not
+    constrained at all.
+  </p>
+  <p>
+    ISHTAR closes that gap with everything else available at once. A network predicts a
+    residual over the upsampled altimetry, and is trained against five things
+    simultaneously: the stereo DEM where it exists, the altimeter seen through its own
+    footprint, a differentiable radar renderer at full resolution, the opposite look where
+    two exist, and the measured roughness. It also predicts its own variance, which is what
+    makes the product honest rather than merely plausible.
+  </p>
+
+  <h2>What Phase 0 tests, and what it cannot</h2>
+  <p>
+    Everything below runs on a <em>synthetic</em> Venus: fractal terrain parameterised by
+    RMS slope, rendered through the same forward model the losses invert, then degraded the
+    way Magellan degrades &mdash; gamma speckle, gain striping, 8-bit quantisation, layover
+    dropouts. The point is that here the answer is known, so a pipeline that cannot recover
+    it will not recover Venus either, and finding that out costs minutes rather than 300 GB
+    and several GPU-days.
+  </p>
+  <div class="note">
+    <p>
+      It says nothing about Venus. The synthetic set has no mosaic seams, no real layover,
+      no tessera, and no Earth-pretraining stage &mdash; which is the premise of the whole
+      approach. Read the numbers as a statement about the <em>code</em>.
+    </p>
+  </div>
+
+  <h2>The result that mattered</h2>
+  <p>
+    The eight loss terms are not in the same units. <code>L_stereo</code> and
+    <code>L_alt</code> are metres, <code>L_phys</code> is decibels, <code>L_rms</code> is
+    radians. Applied to the raw values, the specification's weights give the
+    radarclinometry term &mdash; the only source of sub-kilometre detail across the 80% of
+    the planet with a single look and no stereo &mdash; <strong>0.5% of the objective</strong>.
+    The roughness term gets 0.0%. Nothing in the loss curve says so. The model simply
+    converges toward a smooth planet, and every number you would think to check looks fine.
+  </p>
+  <p>
+    Dividing each term by its own observational uncertainty &mdash; 75&nbsp;m for the stereo
+    DEM, 30&nbsp;m for altimetry, 2&nbsp;dB for the speckle-limited radiometric residual,
+    one degree for slope and roughness &mdash; makes the weights mean what they say, and
+    turns them into a statement of relative trust rather than an accident of units. Both
+    arms below are the same commit, same architecture, same data, same schedule, differing
+    only in a flag:
+  </p>
+
+  <div class="wide">
+    <div class="legend">
+      <span><i class="swatch" style="background:var(--measured)"></i><span>Raw loss units (<code>--raw-loss-scales</code>)</span></span>
+      <span><i class="swatch" style="background:var(--modelled)"></i><span>Normalised by uncertainty</span></span>
+    </div>
+    <figure class="plate" style="margin-top:0.4rem">
+      <div id="chart"></div>
+    </figure>
+    <div class="tablewrap">
+      <table>
+        <caption>Mean absolute error against the synthetic truth, held-out tiles. Bicubic GTDR, the baseline both are trying to beat, is 132.5 m.</caption>
+        <thead>
+          <tr><th scope="col">Training step</th><th scope="col" class="num">250</th>
+              <th scope="col" class="num">500</th><th scope="col" class="num">750</th>
+              <th scope="col" class="num">900</th><th scope="col" class="num">Final skill</th></tr>
+        </thead>
+        <tbody>
+          <tr><th scope="row">Raw loss units</th>
+              <td class="num">{{RAW_250}}</td><td class="num bad">{{RAW_500}}</td>
+              <td class="num">{{RAW_750}}</td><td class="num">{{RAW_900}}</td>
+              <td class="num">{{RAW_900_SKILL}}</td></tr>
+          <tr class="highlight"><th scope="row">Normalised by uncertainty</th>
+              <td class="num">{{NORMALISED_250}}</td><td class="num">{{NORMALISED_500}}</td>
+              <td class="num">{{NORMALISED_750}}</td><td class="num good">{{NORMALISED_900}}</td>
+              <td class="num good">{{NORMALISED_900_SKILL}}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <p>
+    Four and a half times the skill, and it is not only a matter of score. The raw-units
+    arm is <em>unstable</em>: halfway through it wanders to 244&nbsp;m &mdash; nearly twice
+    the error of the baseline it started from, with a 147&nbsp;m altimetry residual &mdash;
+    and only recovers as the learning rate decays. Gradient norms there sit at
+    1&nbsp;000&ndash;7&nbsp;000 against 25&ndash;150 for the normalised arm. It also ends up
+    badly over-cautious, reporting a mean 1σ of 255&nbsp;m and 81% coverage against a 68%
+    target, because the uncertainty term is one of the few that was already dimensionless
+    and is now swamped.
+  </p>
+
+  <h2>The full table</h2>
+  <p>
+    A single RMSE is not an honest summary of super-resolution without labels, so all of it
+    is reported, against all three baselines. Baseline&nbsp;(b) is the one that matters: it
+    inverts the same forward model with no learned prior at all, so beating it is what
+    justifies the network existing.
+  </p>
+  <p>
+    Three of the rows are controls rather than candidates. The <strong>supervised
+    control</strong> fits the true elevation directly on eight tiles: if that failed, the
+    problem would be representation or optimisation rather than supervision, and a flat
+    metric curve looks identical either way. It reaches +77% skill on its own training
+    tiles by step 500 while staying at +5.8% on held-out ones, which settles the question
+    &mdash; the architecture has capacity to spare. It also fails calibration
+    instructively: its mean 1σ falls from 100&nbsp;m to 16&nbsp;m while held-out error does
+    not improve, so coverage collapses to 9.6%. That is what a memorising model's
+    uncertainty looks like. The <strong>pretrain-then-fine-tune</strong> pair is the specification's central
+    claim in miniature: learn the prior where a real label exists, then adapt with weak
+    supervision only. On Venus that first stage is Sentinel-1 paired with Copernicus
+    GLO-30; here it stands in as synthetic ground truth, which tests the mechanism without
+    testing the transfer.
+  </p>
+  <p>
+    The pretrain row is worth reading on its own, because it separates two things a single
+    MAE conflates. Against the weakly supervised run it has the better <em>shape</em>
+    &mdash; 2.86° of slope error against 4.70° &mdash; and much worse <em>anchoring</em>,
+    17.2&nbsp;m of altimetry drift against 10.2&nbsp;m, because nothing in a
+    supervised-only objective ties the surface to the altimeter. That is precisely the
+    division of labour the staged design assumes: the prior supplies shape, the Venus
+    terms supply constraint.
+  </p>
+  <div class="wide tablewrap">
+    <table>
+      <caption>48 held-out synthetic tiles, 128 px, every row from the same commit and from EMA weights. Lower is better except cross-look PSNR and coverage.</caption>
+      <thead>
+        <tr>
+          <th scope="col">Model</th>
+          <th scope="col" class="num">MAE<br>m</th>
+          <th scope="col" class="num">RMSE<br>m</th>
+          <th scope="col" class="num">Slope<br>deg</th>
+          <th scope="col" class="num">Stereo<br>m</th>
+          <th scope="col" class="num">Altim.<br>m</th>
+          <th scope="col" class="num">Phys<br>dB</th>
+          <th scope="col" class="num">X-look<br>dB</th>
+          <th scope="col" class="num">1σ cov</th>
+          <th scope="col" class="num">Skill</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{ABLATION_ROWS}}
+      </tbody>
+    </table>
+  </div>
+
+  <h2>What staging actually buys</h2>
+  <p>
+    Three arms, 900 steps on 200 tiles, same commit, differing only in where they start
+    and what they optimise. Scored on the 48 held-out tiles, not the trainer's own
+    validation set.
+  </p>
+  <div class="wide tablewrap">
+    <table>
+      <caption>The architecture note's central claim, tested in miniature &mdash; and the reason the result needs reading carefully.</caption>
+      <thead>
+        <tr><th scope="col"></th><th scope="col" class="num">Cold start</th>
+          <th scope="col" class="num">Pretrain only</th>
+          <th scope="col" class="num">Pretrain → fine-tune</th></tr>
+      </thead>
+      <tbody>
+        <tr><th scope="row">MAE</th><td class="num">92.55 m</td><td class="num good">81.71 m</td>
+            <td class="num">83.08 m</td></tr>
+        <tr><th scope="row">Slope MAE</th><td class="num">4.70°</td><td class="num good">2.86°</td>
+            <td class="num">3.43°</td></tr>
+        <tr><th scope="row">Altimetry residual</th><td class="num good">10.16 m</td>
+            <td class="num bad">17.24 m</td><td class="num">10.35 m</td></tr>
+        <tr><th scope="row">Cross-look PSNR</th><td class="num bad">23.70 dB</td>
+            <td class="num good">25.30 dB</td><td class="num">24.78 dB</td></tr>
+        <tr><th scope="row">1σ coverage</th><td class="num">0.67</td><td class="num">0.69</td>
+            <td class="num">0.69</td></tr>
+        <tr class="highlight"><th scope="row">Skill vs bicubic GTDR</th><td class="num">+20.4%</td>
+            <td class="num">+29.7%</td><td class="num">+28.5%</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>
+    The supervised pretrain alone wins almost every column, and that is <em>not</em> a
+    result about staging. It is an artefact of the setup: on synthetic data the
+    pretraining label is the test answer, drawn from the same generator, so nothing can
+    beat training directly on it and the Venus terms are a proxy that necessarily pulls
+    away from it. On Venus no such label exists anywhere, which is the entire premise of
+    the project. Reporting this arm as a win would be measuring the experiment, not the
+    method.
+  </p>
+  <p>
+    What the comparison does support is narrower and more useful. Fine-tuning
+    <strong>recovers the anchoring</strong> the supervised objective throws away &mdash;
+    10.35&nbsp;m of altimetry residual against 17.24&nbsp;m &mdash; for about 1.4&nbsp;m of
+    MAE, and on the real problem that trade is the point, because an unanchored surface
+    drifts globally with no ground truth to catch it. And it <strong>retains most of the
+    prior</strong> rather than training it away: 3.43° of slope error against the cold
+    start's 4.70°, and 24.78&nbsp;dB of cross-look against 23.70&nbsp;dB.
+  </p>
+  <p>
+    That last number is the sharpest thing in the table. Cross-look PSNR is the honest test
+    of 75&nbsp;m detail &mdash; predict a DEM from one look, render the <em>other</em> look
+    from it, score against an image the model never saw. The cold-start run scores
+    <strong>below the bicubic baseline</strong>. Left to the Venus terms alone at this
+    training budget, it adds detail that does not predict the other look, while its MAE
+    improves by 20%. Nothing else in the table shows that.
+  </p>
+
+  <p>
+    The raw-loss-units row is the loss-balance finding restated by the model itself. It
+    scores +1.0% overall and yet holds the <em>best altimetry residual in the table</em> —
+    7.6&nbsp;m against the normalised run's 10.2&nbsp;m. That is exactly what the diagnosis
+    predicts: with raw scaling the metre-valued terms dominate, so the model becomes
+    excellent at the one thing they measure and mediocre at everything else. Its slope
+    error, 6.75°, is barely better than the bicubic baseline's 7.48°, and its radiometric
+    residual is <em>worse</em> than the baseline's. It optimised the altimeter and ignored
+    the radar.
+  </p>
+  <p>
+    The physics residual column says the same thing from the other side. Classical
+    radarclinometry has the best of them at 1.40&nbsp;dB, because it optimises that
+    quantity directly and per tile at test time. The two runs that never see the physics
+    term with any real weight — raw units at 2.33&nbsp;dB, cold start at 2.32&nbsp;dB —
+    sit at the bicubic baseline's 2.30&nbsp;dB. They explain the radar image no better
+    than a surface with no detail in it at all.
+  </p>
+
+  <h2>The spectrum is the figure that tells the truth</h2>
+  <p>
+    Two models can share an RMSE and be wrong in opposite directions. The radially averaged
+    power spectrum separates them, and it is the reason the specification asks for it rather
+    than another scalar.
+  </p>
+  <figure class="wide plate">
+    <img src="{{IMG_SPECTRUM}}" alt="Radially averaged power spectrum: truth, ISHTAR, classical radarclinometry and bicubic GTDR, plotted against wavelength from 10 km down to 150 m.">
+    <figcaption>
+      <b>Bicubic GTDR</b> falls off a cliff below 1&nbsp;km &mdash; it has no information
+      there, which is the problem statement in one line. <b>Classical radarclinometry</b>
+      tracks the truth down to roughly 400&nbsp;m, so the physics really does carry that
+      information, and then turns sharply upward below 200&nbsp;m: that bump is speckle
+      being integrated into the DEM as terrain, the classic failure of shape-from-shading,
+      and RMSE cannot see it at all. <b>ISHTAR</b> follows the truth closely from 10&nbsp;km
+      to about 700&nbsp;m, runs modestly above it through the few-hundred-metre band, and
+      rolls off below 200&nbsp;m &mdash; slightly over-producing in the middle of the
+      invented band and under-producing at the finest scales, with none of classical's
+      noise floor. Those are different failures needing different fixes, which is why
+      Section 7 asks for this figure instead of another scalar.
+    </figcaption>
+  </figure>
+
+  <figure class="wide plate">
+    <img src="{{IMG_PANEL}}" alt="Five panels: the SAR image, the bicubic GTDR baseline, the classical radarclinometry inversion, the ISHTAR prediction, its 1-sigma uncertainty, and the true elevation.">
+    <figcaption>
+      One held-out tile, 9.6&nbsp;km across, and a deliberately unflattering one: the model
+      scores worse than the baseline here while averaging 20% better across the 48-tile
+      set. Notice that the network and the classical inversion agree with each other and
+      disagree with the truth. Both are partly converting the scene's intrinsic-brightness
+      variation into relief, which is the one thing in the image the terrain does not
+      explain. Measured across all 48 tiles that costs about 13% more error on the
+      rougher-brightness half &mdash; real, and secondary. The uncertainty panel is nearly
+      uniform, which is its own finding: at this budget the variance head has learned a
+      global error scale but not a spatial one.
+    </figcaption>
+  </figure>
+
+  <h2>Six things that were wrong</h2>
+  <p>
+    Each of these produces a plausible-looking planet rather than an error, which is why
+    each now has a test that fails loudly if it comes back.
+  </p>
+
+  <div class="finding">
+    <span class="tag">Sign convention</span>
+    <h3>The look vector points away from the radar</h3>
+    <p>
+      The specification defines <code>α = atan(∇z · look_vec)</code> as the tilt toward the
+      radar. That identity only holds when <code>look_vec</code> is the down-range beam
+      direction &mdash; pointing <em>away</em>. The natural reading, "the vector from the
+      ground to the radar", inverts every slope in the model. The rendered image still looks
+      like SAR, the losses still fall, and the DEM comes out inside-out.
+    </p>
+  </div>
+
+  <div class="finding">
+    <span class="tag">Tiling</span>
+    <h3>The altimeter footprint is bigger than the tile</h3>
+    <p>
+      A 512&nbsp;px tile at 75&nbsp;m is 38&nbsp;km across; the footprint is 10&nbsp;×&nbsp;20&nbsp;km.
+      Convolving with a kernel that size means the boundary condition propagates about
+      3σ &mdash; 25&nbsp;km &mdash; inward, so on a bare tile essentially every altimetry post
+      measures the padding. Measured with a 60&nbsp;m ripple the footprint should annihilate
+      completely: <strong>4.54&nbsp;m</strong> of leakage on a 256&nbsp;px tile,
+      <strong>0.113&nbsp;m</strong> at 512&nbsp;px with a margin, <strong>0.0007&nbsp;m</strong>
+      at 1024&nbsp;px. Tiles are now cut with a 28.8&nbsp;km context ring.
+    </p>
+    <p>
+      The tempting fix &mdash; blur the altimetry to match, which cancels the edge effect
+      exactly &mdash; is wrong. GTDR already <em>is</em> the footprint-averaged surface, so
+      blurring it again anchors the model to a doubly smoothed target and biases the whole
+      planet smooth, in the one term whose job is to be trustworthy.
+    </p>
+  </div>
+
+  <div class="finding">
+    <span class="tag">Loss construction</span>
+    <h3>Pyramiding the physics loss on the DEM biases it</h3>
+    <p>
+      At 75&nbsp;m the radiometric residual is dominated by speckle, so the physics term also
+      runs on a 4× pyramid. The obvious implementation downsamples the DEM and renders from
+      it, saving a render. It is biased: backscatter is nonlinear in slope, so the render of
+      a block-mean slope is not the block mean of the render, and the gap grows with subgrid
+      roughness &mdash; a systematic error concentrated in tessera, the roughest and most
+      interesting terrain. At the true DEM the biased version bottoms out at 0.27 instead of
+      zero. The pyramid now averages the residual image instead.
+    </p>
+  </div>
+
+  <div class="finding">
+    <span class="tag">Units</span>
+    <h3>The eight loss terms were not commensurable</h3>
+    <p>
+      Covered above &mdash; it is the finding that changed the results most, and the only one
+      whose symptom was purely a number that looked fine.
+    </p>
+  </div>
+
+  <div class="finding">
+    <span class="tag">Checkpointing</span>
+    <h3>The saved model was 41% untrained</h3>
+    <p>
+      The trainer logs metrics from the live weights. Everything downstream &mdash;
+      evaluation, calibration, the figures on this page, global inference &mdash; loads the
+      exponential moving average, because that is what you want at inference time. A fixed
+      decay of 0.999 retains <code>0.999<sup>t</sup></code> of the <em>initial</em> weights,
+      which after 900 steps is 41%.
+    </p>
+    <div class="tablewrap">
+      <table>
+        <caption>The same checkpoint, scored two ways.</caption>
+        <thead><tr><th scope="col">Weights</th><th scope="col" class="num">MAE</th>
+          <th scope="col" class="num">Skill</th><th scope="col" class="num">Mean |residual|</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">Live model</th><td class="num">92.87 m</td>
+              <td class="num good">+29.5%</td><td class="num">68.1 m</td></tr>
+          <tr><th scope="row">Saved EMA</th><td class="num">126.34 m</td>
+              <td class="num bad">+4.0%</td><td class="num">10.3 m</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      The residual column is the tell: the average's predicted correction over the altimetry
+      is a seventh of the model's, because the residual head is zero-initialised and the
+      average is still largely holding that zero. Nothing in the training log shows it
+      &mdash; the log reports the other set of weights. It surfaced only because a
+      standalone evaluation of the same checkpoint disagreed with a number the trainer had
+      printed twenty minutes earlier. The decay now warms up, and the trainer scores both
+      sets at the end of every run so the two can never quietly diverge again.
+    </p>
+  </div>
+
+  <div class="finding">
+    <span class="tag">Gridding</span>
+    <h3>The altimetry posts were not where the loss looked for them</h3>
+    <p>
+      The altimetry loss samples the fine grid at <code>offset + j × stride</code> &mdash;
+      31, 93, 155, 217 at 75&nbsp;m with a 62&nbsp;px stride. A standard
+      <code>interpolate</code> call stretches its input to fill the output instead, putting
+      post <em>j</em> at <code>(j + ½) × H / P − ½</code>. Those agree only when the tile
+      height happens to equal posts × stride, which at these numbers it does not: on a
+      512&nbsp;px tile the last post lands about six pixels &mdash; 450&nbsp;m &mdash; from
+      where the loss reads it. The anchor was comparing the model at one place against
+      altimetry interpolated from another, a systematic error of order 10&nbsp;m in the
+      term whose entire job is to stop the surface drifting.
+    </p>
+    <p>
+      Alongside it: GTDR nodata is <code>−32768</code>, which decodes to 0&nbsp;m, and Venus
+      has no sea level. The validity mask was being decoded and then dropped, so over the
+      ~2% of the planet the altimeter never measured, the loss would have anchored the
+      surface to zero and the uncertainty head would have had no reason to object.
+    </p>
+    <p>
+      Both are real-pipeline bugs, found with no real data &mdash; by keeping the synthetic
+      generator and the ingest path on one shared definition of where a post is, and
+      testing that definition.
+    </p>
+  </div>
+
+  <h2>The globe</h2>
+  <p>
+    The product is meant to be looked at, so it ships as a CesiumJS globe on the
+    6&nbsp;051.8&nbsp;km sphere: SAR, learned relief, the uncertainty layer as a confidence
+    fog, a swipe against the altimetry baseline, elevation transects, and a tour. Terrain is
+    quantized-mesh encoded on the Venus sphere rather than by an off-the-shelf tiler &mdash;
+    every one of those computes bounding spheres and horizon occlusion points on WGS84,
+    which is culling metadata, so wrong values make tiles vanish at the limb and the failure
+    reads as a renderer bug. On the Venus sphere the encoder's bounding sphere at level 0
+    comes out at exactly the planet radius, which is the optimum.
+  </p>
+  <figure class="wide plate">
+    <img src="{{IMG_GLOBE}}" alt="The ISHTAR globe showing learned Venus terrain in colour relief at eight times vertical exaggeration, with the layer and terrain controls at left.">
+    <figcaption>
+      Learned terrain at 7× vertical exaggeration over the Maxwell Montes region, from the
+      synthetic demo tile set that ships with the repository so the globe can be verified
+      before any download. The tiling is sparse in exactly the way the real product is:
+      global coverage to one level, and deeper tiles only inside a few boxes. Two things here are easy to get wrong and silent when you do: quantized-mesh
+      tiles need <code>Content-Encoding: gzip</code>, or every tile fails to parse and the
+      console shows only a generic terrain error; and Venus rotates once per 243 days, so a
+      physically placed sun leaves the planet black from most viewpoints. The first working
+      build rendered a correctly tiled, correctly projected, entirely black world.
+    </figcaption>
+  </figure>
+
+  <div class="wide tablewrap">
+    <table>
+      <caption>Terrain product, measured from the encoder on a level-9 tile of plausible Venus relief.</caption>
+      <thead><tr><th scope="col">Quantity</th><th scope="col" class="num">Value</th><th scope="col">Note</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">Vertices / triangles per tile</th><td class="num">65 × 65 / 8 192</td><td>regular grid</td></tr>
+        <tr><th scope="row">Ground spacing at level 9</th><td class="num">580 m</td><td>level 12 is 73 m, regions of interest only</td></tr>
+        <tr><th scope="row">Tile size</th><td class="num">73.4 kB → 8.6 kB</td><td>raw, then gzipped</td></tr>
+        <tr><th scope="row">Global pyramid, levels 0&ndash;9</th><td class="num">~6.2 GB</td><td>level 12 globally would be 33 million tiles</td></tr>
+        <tr><th scope="row">Bounding sphere at level 0</th><td class="num">6 051.8 km</td><td>exactly the planet radius, i.e. optimal</td></tr>
+        <tr><th scope="row">Horizon occlusion point</th><td class="num">1.00001</td><td>at level 9; WGS84 would give ~1.05</td></tr>
+        <tr><th scope="row">Height quantisation</th><td class="num">0.43 m</td><td>across Venus's entire −3 to +11 km range</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2>What happens next</h2>
+  <p>
+    None of this has touched Magellan yet. The ingest path &mdash; grid arithmetic, DN
+    decoding, longitude wrapping, tile assembly &mdash; is implemented and tested against
+    in-memory rasters; what is missing is roughly 300&nbsp;GB of USGS and PDS products and a
+    CUDA machine, since MPS is about 30× worse per pixel above 128&nbsp;px tiles. In order:
+    clip six regions through Map-A-Planet 2, three of them with stereo coverage; refit the
+    incidence-angle model from the real product labels, because the physics loss reads those
+    angles directly and a systematic few-degree error becomes a systematic slope error;
+    choose the held-out quadrangles; then the Earth pretraining stage, which is the premise
+    of the whole approach and the one thing Phase 0 cannot speak to.
+  </p>
+  <p>
+    Two new spacecraft &mdash; VERITAS and EnVision &mdash; will return the first Venus SAR
+    since 1992 in the early 2030s. Until then, this is what is left in the 1992 data.
+  </p>
+
+  <footer>
+    ISHTAR v0.1 · Phase 0 on synthetic data · 202 Python tests, 21 TypeScript tests<br>
+    Data: NASA/JPL Magellan, USGS Astrogeology, PDS Geosciences Node, Herrick et&nbsp;al. (2012)
+  </footer>
+</div>
+
+<div id="tip" role="status" aria-live="polite"></div>
+
+<script>
+(function () {
+  const DATA = {{CONVERGENCE_JSON}};
+  const host = document.getElementById("chart");
+  if (!host) return;
+
+  const series = [
+    { key: "raw", label: "Raw loss units", color: "var(--measured)" },
+    { key: "normalised", label: "Normalised", color: "var(--modelled)" },
+  ].map((s) => ({ ...s, points: DATA.series[s.key].filter((p) => p[1] !== null) }));
+
+  const W = 760, H = 320, M = { t: 22, r: 104, b: 42, l: 58 };
+  const ys = series.flatMap((s) => s.points.map((p) => p[1])).concat(DATA.baseline);
+  const x0 = 0, x1 = 900;
+  const y0 = Math.floor(Math.min(...ys) / 20) * 20;
+  const y1 = Math.ceil(Math.max(...ys) / 20) * 20;
+  const sx = (v) => M.l + ((v - x0) / (x1 - x0)) * (W - M.l - M.r);
+  const sy = (v) => H - M.b - ((v - y0) / (y1 - y0)) * (H - M.t - M.b);
+
+  const ticksY = [];
+  for (let v = y0; v <= y1 + 1e-9; v += 40) ticksY.push(v);
+  const ticksX = [0, 250, 500, 750, 900];
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+  const out = [];
+  out.push(`<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Mean absolute error in metres against training step, for raw and normalised loss units, with the bicubic GTDR baseline at 132.5 metres." style="display:block;overflow:visible">`);
+
+  ticksY.forEach((v) => {
+    const y = sy(v);
+    out.push(`<line x1="${M.l}" x2="${W - M.r}" y1="${y}" y2="${y}" stroke="var(--rule-soft)" stroke-width="1"/>`);
+    out.push(`<text x="${M.l - 10}" y="${y + 4}" text-anchor="end" fill="var(--muted)" font-family="IBM Plex Mono, monospace" font-size="11">${v}</text>`);
+  });
+  out.push(`<text x="${M.l - 46}" y="${M.t + 4}" fill="var(--muted)" font-family="IBM Plex Mono, monospace" font-size="10.5" letter-spacing="0.06em">MAE m</text>`);
+
+  // The baseline both arms are trying to beat.
+  // Labelled inside the plot at the left, not in the right margin: the raw series ends
+  // within 10 m of the baseline and the two labels would sit on top of each other.
+  const yb = sy(DATA.baseline);
+  out.push(`<line x1="${M.l}" x2="${W - M.r}" y1="${yb}" y2="${yb}" stroke="var(--ink-2)" stroke-width="1" stroke-dasharray="5 4"/>`);
+  out.push(`<text x="${M.l + 8}" y="${yb - 8}" fill="var(--ink-2)" font-family="IBM Plex Mono, monospace" font-size="10.5" letter-spacing="0.04em">bicubic GTDR baseline &middot; ${DATA.baseline} m</text>`);
+
+  ticksX.forEach((v) => {
+    out.push(`<text x="${sx(v)}" y="${H - M.b + 20}" text-anchor="middle" fill="var(--muted)" font-family="IBM Plex Mono, monospace" font-size="11">${v}</text>`);
+  });
+  out.push(`<text x="${(M.l + W - M.r) / 2}" y="${H - 4}" text-anchor="middle" fill="var(--muted)" font-family="IBM Plex Mono, monospace" font-size="10.5" letter-spacing="0.08em">TRAINING STEP &middot; LOWER IS BETTER</text>`);
+
+  series.forEach((s) => {
+    if (!s.points.length) return;
+    const d = s.points.map((p, i) => `${i ? "L" : "M"}${sx(p[0]).toFixed(1)},${sy(p[1]).toFixed(1)}`).join(" ");
+    out.push(`<path d="${d}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`);
+    s.points.forEach((p) => {
+      out.push(`<circle cx="${sx(p[0]).toFixed(1)}" cy="${sy(p[1]).toFixed(1)}" r="4.5" fill="${s.color}" stroke="var(--plate)" stroke-width="2" tabindex="0" data-step="${p[0]}" data-val="${p[1]}" data-label="${esc(s.label)}"/>`);
+    });
+    const last = s.points[s.points.length - 1];
+    out.push(`<text x="${sx(last[0]) + 12}" y="${sy(last[1]) + 4}" fill="${s.color}" font-family="IBM Plex Mono, monospace" font-size="12" font-weight="500">${last[1].toFixed(1)} m</text>`);
+    out.push(`<text x="${sx(last[0]) + 12}" y="${sy(last[1]) + 19}" fill="var(--muted)" font-family="IBM Plex Mono, monospace" font-size="10.5">${esc(s.label)}</text>`);
+  });
+
+  out.push("</svg>");
+  host.innerHTML = out.join("");
+
+  const tip = document.getElementById("tip");
+  host.querySelectorAll("circle").forEach((c) => {
+    const show = () => {
+      const v = Number(c.dataset.val);
+      const skill = 100 * (1 - v / DATA.baseline);
+      tip.textContent = `${c.dataset.label}\nstep ${c.dataset.step} \u00b7 ${v.toFixed(1)} m \u00b7 ${skill > 0 ? "+" : ""}${skill.toFixed(1)}%`;
+      tip.style.opacity = "1";
+      const r = c.getBoundingClientRect();
+      tip.style.left = Math.min(window.innerWidth - 220, r.left + 14) + "px";
+      tip.style.top = r.top - 52 + "px";
+    };
+    const hide = () => { tip.style.opacity = "0"; };
+    c.addEventListener("mouseenter", show);
+    c.addEventListener("mouseleave", hide);
+    c.addEventListener("focus", show);
+    c.addEventListener("blur", hide);
+  });
+})();
+</script>

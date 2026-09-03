@@ -1,0 +1,16 @@
+# ISHTAR training config. Hydra-shaped, but train.py reads plain dataclasses, so these
+# are the documented values rather than the live source of truth until Hydra is wired in.
+defaults:
+  - data: venus
+  - model: unet_convnext
+  - loss: weights_v1
+  - phase: sanity
+  - _self_
+
+seed: 0
+device: auto
+compile: false
+ema_decay: 0.999
+grad_clip: 1.0
+log_every: 25
+val_every: 250
