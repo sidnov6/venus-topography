@@ -296,6 +296,13 @@ radar and observed flattened backscatter, both smoothed to 2.4 km:
 Physics requires a positive correlation. The orthogonal directions sitting at zero is what
 confirms the signal is real rather than an artefact of the test.
 
+Training reflects the fix. `L_phys` had flattened at 1.59 by step 200 in the west run and
+drifted up from there (1.69, 1.71, 1.72, 1.74 through step 800); with east it reaches 1.42
+by step 300 and is still falling. That comparison is *supporting evidence only* — the two
+runs also differ in having stereo supervision, so it is not controlled. The correlation
+table above is the primary evidence, because it is measured directly from the data and
+does not involve training at all.
+
 **This is the failure mode the whole repository is built to prevent, and its own tests
 could not catch it.** `tests/test_augment.py` and `tests/test_physics.py` verify that the
 renderer and the losses agree about the convention, and they do — the synthetic generator

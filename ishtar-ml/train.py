@@ -345,6 +345,21 @@ def train(cfg: TrainConfig) -> dict[str, float]:
             for k, v in list(terms.items()) + [("total", total)]:
                 smooth[k] = smooth_beta * smooth.get(k, float(v.detach())) + (1 - smooth_beta) * float(v.detach())
 
+            # A machine-readable heartbeat next to the checkpoint, so `scripts/status.py`
+            # can report progress and an ETA without scraping stdout.
+            if step % cfg.log_every == 0 or step == cfg.steps - 1:
+                elapsed = time.time() - t0
+                rate = elapsed / max(step, 1)
+                (ckpt / "progress.json").write_text(json.dumps({
+                    "phase": cfg.phase, "data": cfg.data,
+                    "step": step, "steps": cfg.steps,
+                    "seconds_per_step": round(rate, 3),
+                    "elapsed_s": round(elapsed),
+                    "eta_s": round(rate * (cfg.steps - step)),
+                    "loss": {k: round(smooth[k], 4) for k in list(terms) + ["total"]},
+                    "updated": time.time(),
+                }))
+
             if step % cfg.log_every == 0:
                 parts = " ".join(f"{k}={smooth[k]:.3f}" for k in terms)
                 print(f"step {step:5d} lr={lr_at(step,cfg):.2e} loss={smooth['total']:8.3f} {parts} "

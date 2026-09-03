@@ -1,5 +1,63 @@
 # Results
 
+> **Read this first.** Everything below the "Real Venus" section is Phase 0 on synthetic
+> data, where the pipeline works. On real Magellan data it does not yet: the model
+> collapses to a degenerate solution. That result is at the top because it is the one that
+> matters.
+
+## Real Venus: the model declines to produce topography
+
+1 059 real Magellan tiles at 75 m, ten regions, 848 train / 211 held out (Ovda and
+Guinevere). Corrected look direction, stereo supervision on 42% of tiles, uncertainty head
+active. Scored on the held-out tiles:
+
+| | alt m | phys dB | x-look dB | stereo m | relief m | sigma m |
+|---|---|---|---|---|---|---|
+| bicubic GTDR (the input) | 34.10 | 2.498 | 20.95 | 140.2 | 0.0 | — |
+| ISHTAR on real data | 34.12 | 2.131 | 22.31 | 140.2 | **0.1** | 100.8 |
+
+The `relief` column is the finding: **the model added 0.188 m of topography.** Its output
+is the altimetry it was given. Its stereo error is identical to the baseline's to one
+decimal, and so is its altimetry residual.
+
+The apparent win on the physics residual is not topography either:
+
+| physics residual | dB |
+|---|---|
+| model, with its brightness field | 2.131 |
+| model, with `b(x)` removed | **2.498** |
+| plain bicubic GTDR | **2.498** |
+
+Strip the nuisance field and the model *is* the baseline. It explained the radar image
+entirely through `b(x)` — a 1.15 dB brightness field — and left the terrain alone.
+
+This is the exact failure the architecture note names: "`b(x)` is a nuisance field. Let the
+network predict it as a second low-resolution output head ... with a strong smoothness
+penalty, so it cannot absorb slope information." Against real data the penalty is not
+strong enough, and the reason is quantitative: resolvable slope explains about **1% of the
+variance** in 75 m Magellan backscatter (DECISIONS §15), while a free low-resolution
+brightness field can explain considerably more. The optimiser takes the cheaper route.
+
+Two things are worth saying in the model's defence. Reporting a mean 1σ of **100.8 m**
+alongside 0.2 m of relief is the uncertainty head working exactly as designed — the model
+is saying it cannot recover the topography, and saying so honestly. And the earlier run
+without the uncertainty term *did* produce 30.7 m of relief, which suggests `L_nll` is what
+tips it into the degenerate solution: with σ free, the negative log-likelihood is minimised
+by predicting the conditional mean and declaring high uncertainty.
+
+**What to try next**, in the order I would try it:
+
+1. **Constrain `b(x)` much harder** — lower resolution than 1/16, a far stronger TV
+   penalty, or a bounded amplitude. It currently has enough freedom to explain the image
+   without help from the terrain.
+2. **Get the real incidence angles** from the F-BIDR labels. The physics term is running on
+   a placeholder profile, so its gradient is pointing somewhere slightly wrong everywhere.
+3. **Raise `w_stereo` and clamp σ** during early training, so the model cannot buy its way
+   out by claiming ignorance before it has tried.
+4. **Then** the Earth pretraining stage, which is the one part of the recommended framing
+   still untested and the most likely source of a prior strong enough to beat 1%.
+
+
 Everything here is Phase 0: the weakly supervised objective run against a synthetic Venus
 that is rendered through the same forward model the losses invert. It is not a result
 about Venus. It is the check that the pipeline can recover terrain from the supervision

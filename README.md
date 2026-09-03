@@ -20,6 +20,24 @@ measurement**.
 
 ---
 
+## Where this actually stands
+
+The pipeline runs end to end on real Magellan data, and **the model does not yet produce
+Venus topography.** On held-out tiles it adds 0.19 m of relief over the altimetry it was
+given, and explains the radar image entirely through the nuisance brightness field rather
+than through terrain — remove `b(x)` and its physics residual is the baseline's, to three
+decimals. It reports a mean 1σ of 100 m alongside that, which is the uncertainty head
+correctly saying it does not know.
+
+The cause is measurable: resolvable topographic slope explains about **1% of the variance**
+in 75 m Magellan backscatter. The architecture note assumes the radiometric residual is "to
+first order, exactly the slope signal you want to invert"; against real data it mostly is
+not. See [docs/RESULTS.md](docs/RESULTS.md) for the numbers and what to try next.
+
+Phase 0 on synthetic data reaches +28.5% skill over the bicubic baseline, and that is not
+evidence about Venus — the synthetic generator renders through the same forward model the
+losses invert.
+
 ## What runs today
 
 The physics, the model, the losses, the augmentation, the metrics and the training loop
